@@ -9,5 +9,11 @@
   "minimum-stability": "stable",
   "require": {
     "symfony/console": "~2.6.4"
-  }
+  },
+  "autoload": {
+    "psr-4": {
+      "MozJpegPhp\\": "src/"
+    }
+  },
+  "bin": ["bin/mozjpegphp"]
 }
