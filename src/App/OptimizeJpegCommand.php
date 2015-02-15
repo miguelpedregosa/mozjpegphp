@@ -55,6 +55,7 @@ class OptimizeJpegCommand extends Command
                     throw new \Exception('Invalid source file');
                 }
             }
+            $source_size = filesize($source);
             if (!$dest) {
                 $pathinfo = pathinfo($source);
                 $dest = $pathinfo['dirname'] . '/' . $pathinfo['filename'] . '_moz.' . $pathinfo['extension'];
@@ -72,9 +73,30 @@ class OptimizeJpegCommand extends Command
             }
             exec(sprintf("%s -copy none %s > %s", $this->moz_jpeg, '/tmp/mozjpeg_tmp.jpg', $dest));
             unlink('/tmp/mozjpeg_tmp.jpg');
+            $dest_size = filesize($dest);
+            $output->writeln(
+                sprintf(
+                    'Optimización completada: %s --> %s',
+                    $this->humanFilesize($source_size),
+                    $this->humanFilesize($dest_size)
+                )
+            );
         } catch (\Exception $e) {
             $output->writeln('<error>' . $e->getMessage() . '</error>');
         }
+    }
+
+    /**
+     * FROM http://php.net/manual/es/function.filesize.php#106569
+     * @param $bytes
+     * @param int $decimals
+     * @return string
+     */
+    private function humanFilesize($bytes, $decimals = 2)
+    {
+        $sz = 'BKMGTP';
+        $factor = floor((strlen($bytes) - 1) / 3);
+        return sprintf("%.{$decimals}f", $bytes / pow(1024, $factor)) . @$sz[$factor];
     }
 
 }
