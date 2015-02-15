@@ -1,0 +1,11 @@
+{
+    "name": "miguelpedregosa/mozjpegphp",
+    "authors": [
+        {
+            "name": "Miguel Pedregosa",
+            "email": "miguelpedregosa@gmail.com"
+        }
+    ],
+    "minimum-stability": "stable",
+    "require": {}
+}
