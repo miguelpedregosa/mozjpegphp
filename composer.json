@@ -1,11 +1,13 @@
 {
-    "name": "miguelpedregosa/mozjpegphp",
-    "authors": [
-        {
-            "name": "Miguel Pedregosa",
-            "email": "miguelpedregosa@gmail.com"
-        }
-    ],
-    "minimum-stability": "stable",
-    "require": {}
+  "name": "miguelpedregosa/mozjpegphp",
+  "authors": [
+    {
+      "name": "Miguel Pedregosa",
+      "email": "miguelpedregosa@gmail.com"
+    }
+  ],
+  "minimum-stability": "stable",
+  "require": {
+    "symfony/console": "~2.6.4"
+  }
 }
