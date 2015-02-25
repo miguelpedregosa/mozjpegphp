@@ -25,7 +25,7 @@ class OptimizeJpegCommand extends Command
     protected function configure()
     {
         $this->setName('optimize')
-            ->setDescription('Optimiza un archivo jpeg usando la librería MozJpeg')
+            ->setDescription('Optimiza imágenes usando la librería MozJpeg')
             ->addArgument(
                 'source',
                 InputArgument::OPTIONAL,
