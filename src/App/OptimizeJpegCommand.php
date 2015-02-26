@@ -144,7 +144,7 @@ class OptimizeJpegCommand extends Command
         }
         $source_size = filesize($source);
         $pathinfo = pathinfo($source);
-        $dest_file = $dest . '/' . $pathinfo['filename'] . $pathinfo['extension'];
+        $dest_file = $dest . '/' . $pathinfo['filename'] . '.'.$pathinfo['extension'];
 
         if (is_numeric($quality)) {
             exec(sprintf('%s -quality %d -outfile /tmp/mozjpeg_tmp.jpg %s', $this->cjpeg, $quality, $source));
