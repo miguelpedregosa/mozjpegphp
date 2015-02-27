@@ -17,11 +17,12 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 class OptimizeJpegCommand extends Command
 {
-    private $moz_jpeg = '/opt/mozjpeg/bin/jpegtran';
-    private $cjpeg = '/opt/mozjpeg/bin/cjpeg';
-
+    private $mozjpeg_path = '/opt/mozjpeg/bin';
     private $optimized_images = array();
 
+    /**
+     *
+     */
     protected function configure()
     {
         $this->setName('optimize')
@@ -52,9 +53,24 @@ class OptimizeJpegCommand extends Command
             );
     }
 
+    /**
+     * @param InputInterface $input
+     * @param OutputInterface $output
+     * @return int
+     */
     protected function execute(InputInterface $input, OutputInterface $output)
     {
         try {
+            if (!is_executable($this->getJpegTranPath()) || !is_executable($this->getCjpegPath())) {
+                $message = "No se ha encontrado la librería MozJpeg (https://github.com/mozilla/mozjpe)\n\n";
+                $message .= sprintf(
+                    "Debe se instalada en %s o cambiar el path en el archivo %s",
+                    $this->mozjpeg_path,
+                    __FILE__
+                );
+                throw new \Exception($message);
+            }
+
             $source = $input->getArgument('source');
             $quality = $input->getOption('q');
             $dest = $this->getDestinationDirectory($input->getOption('d'), $quality);
@@ -104,7 +120,25 @@ class OptimizeJpegCommand extends Command
 
         } catch (\Exception $e) {
             $output->writeln('<error>' . $e->getMessage() . '</error>');
+            return 1;
         }
+        return 0;
+    }
+
+    /**
+     * @return string
+     */
+    private function getCjpegPath()
+    {
+        return $this->mozjpeg_path . '/cjpeg';
+    }
+
+    /**
+     * @return string
+     */
+    private function getJpegTranPath()
+    {
+        return $this->mozjpeg_path . '/jpegtran';
     }
 
     /**
@@ -144,10 +178,10 @@ class OptimizeJpegCommand extends Command
         }
         $source_size = filesize($source);
         $pathinfo = pathinfo($source);
-        $dest_file = $dest . '/' . $pathinfo['filename'] . '.'.$pathinfo['extension'];
+        $dest_file = $dest . '/' . $pathinfo['filename'] . '.' . $pathinfo['extension'];
 
         if (is_numeric($quality)) {
-            exec(sprintf('%s -quality %d -outfile /tmp/mozjpeg_tmp.jpg %s', $this->cjpeg, $quality, $source));
+            exec(sprintf('%s -quality %d -outfile /tmp/mozjpeg_tmp.jpg %s', $this->getCjpegPath(), $quality, $source));
         } else {
             copy($source, '/tmp/mozjpeg_tmp.jpg');
         }
@@ -156,7 +190,7 @@ class OptimizeJpegCommand extends Command
                 throw new \Exception('Invalid file');
             }
         }
-        exec(sprintf("%s -copy none %s > %s", $this->moz_jpeg, '/tmp/mozjpeg_tmp.jpg', $dest_file));
+        exec(sprintf("%s -copy none %s > %s", $this->getJpegTranPath(), '/tmp/mozjpeg_tmp.jpg', $dest_file));
         unlink('/tmp/mozjpeg_tmp.jpg');
         $dest_size = filesize($dest_file);
         $output->writeln(
