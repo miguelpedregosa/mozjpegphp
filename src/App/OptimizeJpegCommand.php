@@ -19,6 +19,9 @@ class OptimizeJpegCommand extends Command
 {
     private $mozjpeg_path = '/opt/mozjpeg/bin';
     private $optimized_images = array();
+    private $encode_quality = null;
+    private $source = null;
+    private $destination_dir = null;
 
     /**
      *
@@ -61,7 +64,7 @@ class OptimizeJpegCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output)
     {
         try {
-            if (!is_executable($this->getJpegTranPath()) || !is_executable($this->getCjpegPath())) {
+            if (!$this->checkMozJpegLibs()) {
                 $message = "No se ha encontrado la librería MozJpeg (https://github.com/mozilla/mozjpe)\n\n";
                 $message .= sprintf(
                     "Debe se instalada en %s o cambiar el path en el archivo %s",
@@ -71,51 +74,24 @@ class OptimizeJpegCommand extends Command
                 throw new \Exception($message);
             }
 
-            $source = $input->getArgument('source');
-            $quality = $input->getOption('q');
-            $dest = $this->getDestinationDirectory($input->getOption('d'), $quality);
+            //Inicializamos en el entorno a partir de las opciones que se pasan por linea de comandos
+            $this->setUpEnvironment($input);
 
-            //Origen (si no se pasa, usa el directorio actual)
-            if (!$source) {
-                $source = getcwd();
-            }
-
-            //Directorio de destino
-            if (!$dest) {
-                throw new \Exception('Invalid destination directory');
-            }
             //El origen puede ser un fichero o un directorio con imagenes
-            if (is_file($source)) {
-                $this->optimizeFile($output, $source, $dest, $quality);
-            } elseif (is_dir($source)) {
-                if ($handle = opendir($source)) {
+            if (is_file($this->source)) {
+                $this->optimizeFile($output, $this->source);
+            } elseif (is_dir($this->source)) {
+                if ($handle = opendir($this->source)) {
                     $finfo = finfo_open(FILEINFO_MIME_TYPE);
                     while (false !== ($entry = readdir($handle))) {
                         if ($entry != "." && $entry != ".." && !is_dir($entry)) {
                             if (strpos(finfo_file($finfo, $entry), 'image') !== false) {
-                                $this->optimizeFile($output, $entry, $dest, $quality);
+                                $this->optimizeFile($output, $entry);
                             }
                         }
                     }
                     closedir($handle);
                 }
-            }
-            if (count($this->optimized_images)) {
-                $gain = 0;
-                array_walk(
-                    $this->optimized_images,
-                    function ($elem) use (&$gain) {
-                        $gain += $elem;
-                    }
-                );
-                $output->writeln(
-                    sprintf(
-                        "Se han optimizado %d archivos%s con una ganancia de %s",
-                        count($this->optimized_images),
-                        is_numeric($quality) ? '(calidad ' . (int)$quality . '%)' : '',
-                        $this->humanFilesize($gain)
-                    )
-                );
             }
 
         } catch (\Exception $e) {
@@ -126,11 +102,11 @@ class OptimizeJpegCommand extends Command
     }
 
     /**
-     * @return string
+     * @return bool
      */
-    private function getCjpegPath()
+    private function checkMozJpegLibs()
     {
-        return $this->mozjpeg_path . '/cjpeg';
+        return is_executable($this->getJpegTranPath()) && is_executable($this->getCjpegPath());
     }
 
     /**
@@ -142,15 +118,49 @@ class OptimizeJpegCommand extends Command
     }
 
     /**
+     * @return string
+     */
+    private function getCjpegPath()
+    {
+        return $this->mozjpeg_path . '/cjpeg';
+    }
+
+    /**
+     * @param InputInterface $input
+     * @throws \Exception
+     */
+    private function setUpEnvironment(InputInterface $input)
+    {
+        //Origen, si no se proporciona se usa el directorio actual
+        $source = $input->getArgument('source');
+        if (!$source) {
+            $source = getcwd();
+        }
+        $this->source = $source;
+
+        //Directorio de destino
+        $dest = $this->getDestinationDirectory($input->getOption('d'));
+        if (!$dest) {
+            throw new \Exception('Invalid destination directory');
+        }
+        $this->destination_dir = $dest;
+
+
+        //Calidad de la recodificacion del fichero (si se pasa)
+        $encode_quality = $input->getOption('q');
+        $this->encode_quality = is_numeric($encode_quality) ? (int)$encode_quality : null;
+
+    }
+
+    /**
      * @param null $dest
-     * @param null $quality
      * @return bool|null|string
      */
-    private function getDestinationDirectory($dest = null, $quality = null)
+    private function getDestinationDirectory($dest = null)
     {
         //Directorio por defecto
         if (is_null($dest)) {
-            $dest = (is_numeric($quality)) ? sprintf('optimized_%d', $quality) : 'optimized';
+            $dest = (is_numeric($this->encode_quality)) ? sprintf('optimized_%d', $this->encode_quality) : 'optimized';
         }
 
         if (is_dir($dest) && is_writable($dest)) {
@@ -165,11 +175,9 @@ class OptimizeJpegCommand extends Command
     /**
      * @param OutputInterface $output
      * @param $source
-     * @param null $dest
-     * @param null $quality
      * @throws \Exception
      */
-    private function optimizeFile(OutputInterface $output, $source, $dest = null, $quality = null)
+    private function optimizeFile(OutputInterface $output, $source)
     {
         if (!is_file($source)) {
             {
@@ -178,10 +186,17 @@ class OptimizeJpegCommand extends Command
         }
         $source_size = filesize($source);
         $pathinfo = pathinfo($source);
-        $dest_file = $dest . '/' . $pathinfo['filename'] . '.' . $pathinfo['extension'];
+        $dest_file = $this->destination_dir . '/' . $pathinfo['filename'] . '.' . $pathinfo['extension'];
 
-        if (is_numeric($quality)) {
-            exec(sprintf('%s -quality %d -outfile /tmp/mozjpeg_tmp.jpg %s', $this->getCjpegPath(), $quality, $source));
+        if ($this->encode_quality) {
+            exec(
+                sprintf(
+                    '%s -quality %d -outfile /tmp/mozjpeg_tmp.jpg %s',
+                    $this->getCjpegPath(),
+                    $this->encode_quality,
+                    $source
+                )
+            );
         } else {
             copy($source, '/tmp/mozjpeg_tmp.jpg');
         }
@@ -197,7 +212,7 @@ class OptimizeJpegCommand extends Command
             sprintf(
                 'Optimizando imagen "%s"%s: %s --> %s',
                 $source,
-                ($quality) ? ' (' . (int)$quality . '%)' : '',
+                ($this->encode_quality) ? ' (' . (int)$this->encode_quality . '%)' : '',
                 $this->humanFilesize($source_size),
                 $this->humanFilesize($dest_size)
             )
@@ -216,6 +231,29 @@ class OptimizeJpegCommand extends Command
         $sz = 'BKMGTP';
         $factor = floor((strlen($bytes) - 1) / 3);
         return sprintf("%.{$decimals}f", $bytes / pow(1024, $factor)) . @$sz[$factor];
+    }
+
+    private function printStats(OutputInterface $output, $quality)
+    {
+        if (count($this->optimized_images)) {
+            $gain = 0;
+            array_walk(
+                $this->optimized_images,
+                function ($elem) use (&$gain) {
+                    $gain += $elem;
+                }
+            );
+            $output->writeln(
+                sprintf(
+                    "Se han optimizado %d archivos%s con una ganancia de %s",
+                    count($this->optimized_images),
+                    is_numeric($quality) ? '(calidad ' . (int)$quality . '%)' : '',
+                    $this->humanFilesize($gain)
+                )
+            );
+        }
+
+
     }
 
 }
