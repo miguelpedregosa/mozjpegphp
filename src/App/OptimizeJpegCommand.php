@@ -33,29 +33,24 @@ class OptimizeJpegCommand extends Command
     protected function configure()
     {
         $this->setName('optimize')
-            ->setDescription('Optimiza imágenes usando la librería MozJpeg')
+            ->setDescription('Optimize images using MozJpeg lib <https://github.com/mozilla/mozjpeg>')
             ->addArgument(
                 'source',
                 InputArgument::OPTIONAL,
-                'Fichero de origen a optimizar'
-            )
-            ->addArgument(
-                'dest',
-                InputArgument::OPTIONAL,
-                'Fichero de destino'
+                'File o directory to toptimize'
             )
             ->addOption(
                 'q',
                 null,
                 InputOption::VALUE_OPTIONAL,
-                'Nivel de calidad para recodificar el fichero',
+                'Quality for jpeg file recoding (if none, optimization will be lossless)',
                 null
             )
             ->addOption(
                 'd',
                 null,
                 InputOption::VALUE_OPTIONAL,
-                'Directorio de destino para las imágenes optimizadas',
+                'Destiniation directory (if none, "optimized" dir will be created in source dir',
                 null
             );
     }
@@ -69,9 +64,9 @@ class OptimizeJpegCommand extends Command
     {
         try {
             if (!$this->checkMozJpegLibs()) {
-                $message = "No se ha encontrado la librería MozJpeg (https://github.com/mozilla/mozjpe)\n\n";
+                $message = "MozJpeg lib (https://github.com/mozilla/mozjpeg) not installed\n\n";
                 $message .= sprintf(
-                    "Debe estar instalada en %s o cambiar el path en el archivo %s",
+                    "Must be installed in %s or change the path in %s",
                     $this->mozjpeg_path,
                     __FILE__
                 );
@@ -136,7 +131,7 @@ class OptimizeJpegCommand extends Command
         //Calidad de la recodificacion del fichero (si se pasa)
         $encode_quality = $input->getOption('q');
         if (is_numeric($encode_quality) && $encode_quality < 0) {
-            throw new \Exception('La calidad de la codificación debe ser mayor que 0');
+            throw new \Exception('Quality for image recoding must be grater than 0');
         }
         $this->encode_quality = is_numeric($encode_quality) ? (int)$encode_quality : null;
 
@@ -150,7 +145,7 @@ class OptimizeJpegCommand extends Command
         //Directorio de destino
         $dest = $this->getDestinationDirectory($input->getOption('d'));
         if (!$dest) {
-            throw new \Exception('Directorio de destino inválido');
+            throw new \Exception('Invalid destination dir');
         }
         $this->destination_dir = $dest;
 
@@ -185,7 +180,7 @@ class OptimizeJpegCommand extends Command
     {
         if (!is_file($source)) {
             {
-                throw new \Exception(sprintf('Archivo %s inválido', $source));
+                throw new \Exception(sprintf('Invalid file %s', $source));
             }
         }
         $source_size = filesize($source);
@@ -202,7 +197,7 @@ class OptimizeJpegCommand extends Command
         $dest_size = filesize($dest_file);
         $output->writeln(
             sprintf(
-                'Optimizando imagen "%s"%s: %s --> %s',
+                'Optimizing image "%s"%s: %s --> %s',
                 $source,
                 ($this->encode_quality) ? ' (' . (int)$this->encode_quality . '%)' : '',
                 $this->humanFilesize($source_size),
@@ -235,7 +230,7 @@ class OptimizeJpegCommand extends Command
 
         if (!is_file('/tmp/mozjpeg_tmp.jpg')) {
             {
-                throw new \Exception('Ha ocurrido un error al crear un archivo temporal necesario');
+                throw new \Exception('Error creating temp file');
             }
         }
         return '/tmp/mozjpeg_tmp.jpg';
@@ -279,9 +274,9 @@ class OptimizeJpegCommand extends Command
             );
             $output->writeln(
                 sprintf(
-                    "Se han optimizado %d archivos%s con una ganancia de %s",
+                    "Optimized %d files%s with gain of %s",
                     count($this->optimized_images),
-                    is_numeric($this->encode_quality) ? '(calidad ' . (int)$this->encode_quality . '%)' : '',
+                    is_numeric($this->encode_quality) ? ' (recoding at ' . (int)$this->encode_quality . '% of original quality)' : '',
                     $this->humanFilesize($gain)
                 )
             );
