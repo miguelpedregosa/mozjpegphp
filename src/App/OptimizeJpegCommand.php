@@ -19,6 +19,13 @@ class OptimizeJpegCommand extends Command
 {
     private $mozjpeg_path = '/opt/mozjpeg/bin';
     private $optimized_images = array();
+    private $encode_quality = null;
+    private $source = null;
+    private $destination_dir = null;
+    private $supported_images = array(
+        IMAGETYPE_JPEG,
+        IMAGETYPE_BMP
+    );
 
     /**
      *
@@ -61,62 +68,33 @@ class OptimizeJpegCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output)
     {
         try {
-            if (!is_executable($this->getJpegTranPath()) || !is_executable($this->getCjpegPath())) {
+            if (!$this->checkMozJpegLibs()) {
                 $message = "No se ha encontrado la librería MozJpeg (https://github.com/mozilla/mozjpe)\n\n";
                 $message .= sprintf(
-                    "Debe se instalada en %s o cambiar el path en el archivo %s",
+                    "Debe estar instalada en %s o cambiar el path en el archivo %s",
                     $this->mozjpeg_path,
                     __FILE__
                 );
                 throw new \Exception($message);
             }
 
-            $source = $input->getArgument('source');
-            $quality = $input->getOption('q');
-            $dest = $this->getDestinationDirectory($input->getOption('d'), $quality);
+            //Inicializamos en el entorno a partir de las opciones que se pasan por linea de comandos
+            $this->setUpEnvironment($input);
 
-            //Origen (si no se pasa, usa el directorio actual)
-            if (!$source) {
-                $source = getcwd();
-            }
-
-            //Directorio de destino
-            if (!$dest) {
-                throw new \Exception('Invalid destination directory');
-            }
             //El origen puede ser un fichero o un directorio con imagenes
-            if (is_file($source)) {
-                $this->optimizeFile($output, $source, $dest, $quality);
-            } elseif (is_dir($source)) {
-                if ($handle = opendir($source)) {
-                    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            if (is_file($this->source)) {
+                $this->proccessFile($output, $this->source);
+            } elseif (is_dir($this->source)) {
+                if ($handle = opendir($this->source)) {
                     while (false !== ($entry = readdir($handle))) {
-                        if ($entry != "." && $entry != ".." && !is_dir($entry)) {
-                            if (strpos(finfo_file($finfo, $entry), 'image') !== false) {
-                                $this->optimizeFile($output, $entry, $dest, $quality);
-                            }
+                        if ($entry != "." && $entry != ".." && !is_dir($entry) && $this->isSupportedImage($entry)) {
+                            $this->proccessFile($output, $entry);
                         }
                     }
                     closedir($handle);
                 }
             }
-            if (count($this->optimized_images)) {
-                $gain = 0;
-                array_walk(
-                    $this->optimized_images,
-                    function ($elem) use (&$gain) {
-                        $gain += $elem;
-                    }
-                );
-                $output->writeln(
-                    sprintf(
-                        "Se han optimizado %d archivos%s con una ganancia de %s",
-                        count($this->optimized_images),
-                        is_numeric($quality) ? '(calidad ' . (int)$quality . '%)' : '',
-                        $this->humanFilesize($gain)
-                    )
-                );
-            }
+            $this->printStats($output);
 
         } catch (\Exception $e) {
             $output->writeln('<error>' . $e->getMessage() . '</error>');
@@ -126,11 +104,11 @@ class OptimizeJpegCommand extends Command
     }
 
     /**
-     * @return string
+     * @return bool
      */
-    private function getCjpegPath()
+    private function checkMozJpegLibs()
     {
-        return $this->mozjpeg_path . '/cjpeg';
+        return is_executable($this->getJpegTranPath()) && is_executable($this->getCjpegPath());
     }
 
     /**
@@ -142,15 +120,51 @@ class OptimizeJpegCommand extends Command
     }
 
     /**
+     * @return string
+     */
+    private function getCjpegPath()
+    {
+        return $this->mozjpeg_path . '/cjpeg';
+    }
+
+    /**
+     * @param InputInterface $input
+     * @throws \Exception
+     */
+    private function setUpEnvironment(InputInterface $input)
+    {
+        //Calidad de la recodificacion del fichero (si se pasa)
+        $encode_quality = $input->getOption('q');
+        if (is_numeric($encode_quality) && $encode_quality < 0) {
+            throw new \Exception('La calidad de la codificación debe ser mayor que 0');
+        }
+        $this->encode_quality = is_numeric($encode_quality) ? (int)$encode_quality : null;
+
+        //Origen, si no se proporciona se usa el directorio actual
+        $source = $input->getArgument('source');
+        if (!$source) {
+            $source = getcwd();
+        }
+        $this->source = $source;
+
+        //Directorio de destino
+        $dest = $this->getDestinationDirectory($input->getOption('d'));
+        if (!$dest) {
+            throw new \Exception('Directorio de destino inválido');
+        }
+        $this->destination_dir = $dest;
+
+    }
+
+    /**
      * @param null $dest
-     * @param null $quality
      * @return bool|null|string
      */
-    private function getDestinationDirectory($dest = null, $quality = null)
+    private function getDestinationDirectory($dest = null)
     {
         //Directorio por defecto
         if (is_null($dest)) {
-            $dest = (is_numeric($quality)) ? sprintf('optimized_%d', $quality) : 'optimized';
+            $dest = (is_numeric($this->encode_quality)) ? sprintf('optimized_%d', $this->encode_quality) : 'optimized';
         }
 
         if (is_dir($dest) && is_writable($dest)) {
@@ -165,44 +179,66 @@ class OptimizeJpegCommand extends Command
     /**
      * @param OutputInterface $output
      * @param $source
-     * @param null $dest
-     * @param null $quality
      * @throws \Exception
      */
-    private function optimizeFile(OutputInterface $output, $source, $dest = null, $quality = null)
+    private function proccessFile(OutputInterface $output, $source)
     {
         if (!is_file($source)) {
             {
-                throw new \Exception('Invalid source file');
+                throw new \Exception(sprintf('Archivo %s inválido', $source));
             }
         }
         $source_size = filesize($source);
         $pathinfo = pathinfo($source);
-        $dest_file = $dest . '/' . $pathinfo['filename'] . '.' . $pathinfo['extension'];
+        $dest_file = $this->destination_dir . '/' . $pathinfo['filename'] . '.jpg';
 
-        if (is_numeric($quality)) {
-            exec(sprintf('%s -quality %d -outfile /tmp/mozjpeg_tmp.jpg %s', $this->getCjpegPath(), $quality, $source));
-        } else {
-            copy($source, '/tmp/mozjpeg_tmp.jpg');
-        }
-        if (!is_file('/tmp/mozjpeg_tmp.jpg')) {
-            {
-                throw new \Exception('Invalid file');
-            }
-        }
-        exec(sprintf("%s -copy none %s > %s", $this->getJpegTranPath(), '/tmp/mozjpeg_tmp.jpg', $dest_file));
-        unlink('/tmp/mozjpeg_tmp.jpg');
+        //Encode (cjpeg)
+        $jpeg = $this->encodeImageToJpeg($source);
+
+
+        //Transcode (jpegtran)
+        exec(sprintf("%s -copy none %s > %s", $this->getJpegTranPath(), $jpeg, $dest_file));
+        unlink($jpeg);
         $dest_size = filesize($dest_file);
         $output->writeln(
             sprintf(
                 'Optimizando imagen "%s"%s: %s --> %s',
                 $source,
-                ($quality) ? ' (' . (int)$quality . '%)' : '',
+                ($this->encode_quality) ? ' (' . (int)$this->encode_quality . '%)' : '',
                 $this->humanFilesize($source_size),
                 $this->humanFilesize($dest_size)
             )
         );
         $this->optimized_images[] = $source_size - $dest_size;
+    }
+
+    /**
+     * @param $source
+     * @return string
+     * @throws \Exception
+     */
+    private function encodeImageToJpeg($source)
+    {
+        if (exif_imagetype($source) !== IMAGETYPE_JPEG || $this->encode_quality) {
+            $quality = ($this->encode_quality) ? (int)$this->encode_quality : 100;
+            exec(
+                sprintf(
+                    '%s -quality %d -outfile /tmp/mozjpeg_tmp.jpg %s',
+                    $this->getCjpegPath(),
+                    $quality,
+                    $source
+                )
+            );
+        } else {
+            copy($source, '/tmp/mozjpeg_tmp.jpg');
+        }
+
+        if (!is_file('/tmp/mozjpeg_tmp.jpg')) {
+            {
+                throw new \Exception('Ha ocurrido un error al crear un archivo temporal necesario');
+            }
+        }
+        return '/tmp/mozjpeg_tmp.jpg';
     }
 
     /**
@@ -216,6 +252,42 @@ class OptimizeJpegCommand extends Command
         $sz = 'BKMGTP';
         $factor = floor((strlen($bytes) - 1) / 3);
         return sprintf("%.{$decimals}f", $bytes / pow(1024, $factor)) . @$sz[$factor];
+    }
+
+    /**
+     * @param $source
+     * @return bool
+     */
+    private function isSupportedImage($source)
+    {
+        return in_array(exif_imagetype($source), $this->supported_images);
+
+    }
+
+    /**
+     * @param OutputInterface $output
+     */
+    private function printStats(OutputInterface $output)
+    {
+        if (count($this->optimized_images)) {
+            $gain = 0;
+            array_walk(
+                $this->optimized_images,
+                function ($elem) use (&$gain) {
+                    $gain += $elem;
+                }
+            );
+            $output->writeln(
+                sprintf(
+                    "Se han optimizado %d archivos%s con una ganancia de %s",
+                    count($this->optimized_images),
+                    is_numeric($this->encode_quality) ? '(calidad ' . (int)$this->encode_quality . '%)' : '',
+                    $this->humanFilesize($gain)
+                )
+            );
+        }
+
+
     }
 
 }
