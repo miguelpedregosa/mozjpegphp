@@ -22,6 +22,10 @@ class OptimizeJpegCommand extends Command
     private $encode_quality = null;
     private $source = null;
     private $destination_dir = null;
+    private $supported_images = array(
+        IMAGETYPE_JPEG,
+        IMAGETYPE_BMP
+    );
 
     /**
      *
@@ -67,7 +71,7 @@ class OptimizeJpegCommand extends Command
             if (!$this->checkMozJpegLibs()) {
                 $message = "No se ha encontrado la librería MozJpeg (https://github.com/mozilla/mozjpe)\n\n";
                 $message .= sprintf(
-                    "Debe se instalada en %s o cambiar el path en el archivo %s",
+                    "Debe estar instalada en %s o cambiar el path en el archivo %s",
                     $this->mozjpeg_path,
                     __FILE__
                 );
@@ -79,20 +83,18 @@ class OptimizeJpegCommand extends Command
 
             //El origen puede ser un fichero o un directorio con imagenes
             if (is_file($this->source)) {
-                $this->optimizeFile($output, $this->source);
+                $this->proccessFile($output, $this->source);
             } elseif (is_dir($this->source)) {
                 if ($handle = opendir($this->source)) {
-                    $finfo = finfo_open(FILEINFO_MIME_TYPE);
                     while (false !== ($entry = readdir($handle))) {
-                        if ($entry != "." && $entry != ".." && !is_dir($entry)) {
-                            if (strpos(finfo_file($finfo, $entry), 'image') !== false) {
-                                $this->optimizeFile($output, $entry);
-                            }
+                        if ($entry != "." && $entry != ".." && !is_dir($entry) && $this->isSupportedImage($entry)) {
+                            $this->proccessFile($output, $entry);
                         }
                     }
                     closedir($handle);
                 }
             }
+            $this->printStats($output);
 
         } catch (\Exception $e) {
             $output->writeln('<error>' . $e->getMessage() . '</error>');
@@ -131,6 +133,13 @@ class OptimizeJpegCommand extends Command
      */
     private function setUpEnvironment(InputInterface $input)
     {
+        //Calidad de la recodificacion del fichero (si se pasa)
+        $encode_quality = $input->getOption('q');
+        if (is_numeric($encode_quality) && $encode_quality < 0) {
+            throw new \Exception('La calidad de la codificación debe ser mayor que 0');
+        }
+        $this->encode_quality = is_numeric($encode_quality) ? (int)$encode_quality : null;
+
         //Origen, si no se proporciona se usa el directorio actual
         $source = $input->getArgument('source');
         if (!$source) {
@@ -141,14 +150,9 @@ class OptimizeJpegCommand extends Command
         //Directorio de destino
         $dest = $this->getDestinationDirectory($input->getOption('d'));
         if (!$dest) {
-            throw new \Exception('Invalid destination directory');
+            throw new \Exception('Directorio de destino inválido');
         }
         $this->destination_dir = $dest;
-
-
-        //Calidad de la recodificacion del fichero (si se pasa)
-        $encode_quality = $input->getOption('q');
-        $this->encode_quality = is_numeric($encode_quality) ? (int)$encode_quality : null;
 
     }
 
@@ -177,36 +181,24 @@ class OptimizeJpegCommand extends Command
      * @param $source
      * @throws \Exception
      */
-    private function optimizeFile(OutputInterface $output, $source)
+    private function proccessFile(OutputInterface $output, $source)
     {
         if (!is_file($source)) {
             {
-                throw new \Exception('Invalid source file');
+                throw new \Exception(sprintf('Archivo %s inválido', $source));
             }
         }
         $source_size = filesize($source);
         $pathinfo = pathinfo($source);
-        $dest_file = $this->destination_dir . '/' . $pathinfo['filename'] . '.' . $pathinfo['extension'];
+        $dest_file = $this->destination_dir . '/' . $pathinfo['filename'] . '.jpg';
 
-        if ($this->encode_quality) {
-            exec(
-                sprintf(
-                    '%s -quality %d -outfile /tmp/mozjpeg_tmp.jpg %s',
-                    $this->getCjpegPath(),
-                    $this->encode_quality,
-                    $source
-                )
-            );
-        } else {
-            copy($source, '/tmp/mozjpeg_tmp.jpg');
-        }
-        if (!is_file('/tmp/mozjpeg_tmp.jpg')) {
-            {
-                throw new \Exception('Invalid file');
-            }
-        }
-        exec(sprintf("%s -copy none %s > %s", $this->getJpegTranPath(), '/tmp/mozjpeg_tmp.jpg', $dest_file));
-        unlink('/tmp/mozjpeg_tmp.jpg');
+        //Encode (cjpeg)
+        $jpeg = $this->encodeImageToJpeg($source);
+
+
+        //Transcode (jpegtran)
+        exec(sprintf("%s -copy none %s > %s", $this->getJpegTranPath(), $jpeg, $dest_file));
+        unlink($jpeg);
         $dest_size = filesize($dest_file);
         $output->writeln(
             sprintf(
@@ -218,6 +210,35 @@ class OptimizeJpegCommand extends Command
             )
         );
         $this->optimized_images[] = $source_size - $dest_size;
+    }
+
+    /**
+     * @param $source
+     * @return string
+     * @throws \Exception
+     */
+    private function encodeImageToJpeg($source)
+    {
+        if (exif_imagetype($source) !== IMAGETYPE_JPEG || $this->encode_quality) {
+            $quality = ($this->encode_quality) ? (int)$this->encode_quality : 100;
+            exec(
+                sprintf(
+                    '%s -quality %d -outfile /tmp/mozjpeg_tmp.jpg %s',
+                    $this->getCjpegPath(),
+                    $quality,
+                    $source
+                )
+            );
+        } else {
+            copy($source, '/tmp/mozjpeg_tmp.jpg');
+        }
+
+        if (!is_file('/tmp/mozjpeg_tmp.jpg')) {
+            {
+                throw new \Exception('Ha ocurrido un error al crear un archivo temporal necesario');
+            }
+        }
+        return '/tmp/mozjpeg_tmp.jpg';
     }
 
     /**
@@ -233,7 +254,20 @@ class OptimizeJpegCommand extends Command
         return sprintf("%.{$decimals}f", $bytes / pow(1024, $factor)) . @$sz[$factor];
     }
 
-    private function printStats(OutputInterface $output, $quality)
+    /**
+     * @param $source
+     * @return bool
+     */
+    private function isSupportedImage($source)
+    {
+        return in_array(exif_imagetype($source), $this->supported_images);
+
+    }
+
+    /**
+     * @param OutputInterface $output
+     */
+    private function printStats(OutputInterface $output)
     {
         if (count($this->optimized_images)) {
             $gain = 0;
@@ -247,7 +281,7 @@ class OptimizeJpegCommand extends Command
                 sprintf(
                     "Se han optimizado %d archivos%s con una ganancia de %s",
                     count($this->optimized_images),
-                    is_numeric($quality) ? '(calidad ' . (int)$quality . '%)' : '',
+                    is_numeric($this->encode_quality) ? '(calidad ' . (int)$this->encode_quality . '%)' : '',
                     $this->humanFilesize($gain)
                 )
             );
