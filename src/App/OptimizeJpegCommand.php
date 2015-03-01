@@ -37,7 +37,7 @@ class OptimizeJpegCommand extends Command
             ->addArgument(
                 'source',
                 InputArgument::OPTIONAL,
-                'File o directory to toptimize'
+                'File o directory to optimize'
             )
             ->addOption(
                 'q',
